@@ -12,11 +12,11 @@
 ═══════════════════════════════════════════════ */
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;}
-body{font-family:'Barlow',sans-serif;background:#060606;color:#f2eee8;overflow-x:hidden;}
+body{font-family:'Barlow',sans-serif;background:#060606;color:#f5f0ea;overflow-x:hidden;}
 
 :root{
   --or:#F4820A;--or2:#FF9F2E;--or3:#c86000;
-  --tx0:#ffffff;--tx1:#f8f4ef;--tx2:#ede4d8;--tx3:#ddd4c6;--tx4:#b8ac9e;
+  --tx0:#ffffff;--tx1:#ffffff;--tx2:#f0e8dc;--tx3:#d4c8b8;--tx4:#a89880;
   --bg0:#060606;--bg1:#0e0e0e;--bg2:#161616;--bg3:#222;
   --border:#2a2a2a;
   --pad:clamp(20px,5vw,72px);
@@ -561,9 +561,9 @@ footer{background:#000;padding:clamp(26px,4vw,38px) var(--pad);padding-bottom:ma
           <label class="book-label" for="bPkg">Formule souhaitée</label>
           <select class="book-sel" id="bPkg">
             <option value="">— Sélectionner une formule —</option>
-            <option value="starter">Starter · 1 semaine</option>
-            <option value="mensuel">Mensuel · 4 semaines</option>
-            <option value="trimestriel">Trimestriel · 12 semaines</option>
+            <option value="intensif">Intensif · production maximale</option>
+            <option value="standard">Standard · production régulière</option>
+            <option value="decouverte">Découverte · première production</option>
             <option value="personnalise">Personnalisé</option>
           </select>
         </div>
@@ -582,7 +582,7 @@ footer{background:#000;padding:clamp(26px,4vw,38px) var(--pad);padding-bottom:ma
       <div class="book-success" id="bookSuccess">
         <div class="tick">✅</div>
         <h3>DEMANDE ENVOYÉE !</h3>
-        <p>Merci <strong id="succName"></strong> — notre équipe vous contacte sous 24h pour confirmer votre réservation et établir le devis définitif.</p>
+        <p>Merci <strong id="succName"></strong> — votre demande de <strong id="succWeeks"></strong> semaines (<strong id="succTotal"></strong> € HT estimatif) a bien été enregistrée. Notre équipe vous contacte sous 24h.</p>
         <br>
         <button class="btn-or" onclick="resetBooking()" style="margin:0 auto;display:block;">Nouvelle réservation</button>
       </div>
@@ -723,34 +723,46 @@ document.getElementById('ctaBtn').addEventListener('click',()=>{
 });
 
 /* ════════════════════════════════════════
-   BOOKING / CALENDAR ENGINE
+   BOOKING / CALENDAR ENGINE v2
+   • Delegation via pointerdown (reliable mobile+desktop)
+   • Min 2 weeks enforced, auto-extend
+   • Fixed price 2000 €/week
+   • Overlap detection
 ════════════════════════════════════════ */
-// Reservations stored in-page (persists during session, reset on reload)
-// In production: replace with fetch() calls to a backend API
+
+const PRICE_PER_WEEK = 2000;
+const MIN_WEEKS = 2;
+
 let reservations = [
-  // Pre-seeded example reservations so the calendar looks realistic
-  {id:'r1', name:'Dupont Alimentaire', email:'contact@dupont.fr', phone:'', pkg:'mensuel',   note:'', start:'2025-05-05', end:'2025-05-30'},
-  {id:'r2', name:'La Pasta d\'Oc',     email:'info@lapasta.fr',   phone:'', pkg:'starter',   note:'', start:'2025-06-02', end:'2025-06-06'},
-  {id:'r3', name:'Bio Saveur SARL',    email:'',                  phone:'', pkg:'trimestriel',note:'',start:'2025-07-07', end:'2025-09-26'},
+  {id:'r1',name:'Dupont Alimentaire',email:'contact@dupont.fr',phone:'',pkg:'standard',note:'',start:'2025-05-05',end:'2025-05-30'},
+  {id:'r2',name:'La Pasta d\'Oc',email:'info@lapasta.fr',phone:'',pkg:'decouverte',note:'',start:'2025-06-02',end:'2025-06-15'},
+  {id:'r3',name:'Bio Saveur SARL',email:'',phone:'',pkg:'intensif',note:'',start:'2025-07-07',end:'2025-09-26'},
+  {id:'r4',name:'Ponsan SARL',email:'contact@ponsan.fr',phone:'+33 5 61 00 00 01',pkg:'standard',note:'Production pâtes artisanales — site de Tronces',start:'2025-10-06',end:'2025-11-14'},
+  {id:'r5',name:'Ponsan SARL — Tronces',email:'contact@ponsan.fr',phone:'+33 5 61 00 00 01',pkg:'intensif',note:'Deuxième rotation site Tronces, production maximale',start:'2026-01-05',end:'2026-03-27'},
 ];
 
-let calYear, calMonth2, selStart=null, selEnd=null, selPhase=0;
+let calYear, calMonth2;
+let selStart = null, selEnd = null, selPhase = 0;
 
-function initCal(){
-  const now=new Date();
-  calYear=now.getFullYear();
-  calMonth2=now.getMonth();
-  renderCal();
-}
+function isoToDate(s){const[y,m,d]=s.split('-');return new Date(+y,+m-1,+d);}
+function dateToIso(dt){const y=dt.getFullYear(),m=String(dt.getMonth()+1).padStart(2,'0'),d=String(dt.getDate()).padStart(2,'0');return y+'-'+m+'-'+d;}
+function addDays(iso,n){const dt=isoToDate(iso);dt.setDate(dt.getDate()+n);return dateToIso(dt);}
+function daysBetween(a,b){return Math.round((isoToDate(b)-isoToDate(a))/86400000)+1;}
+function weeksFromDays(days){return Math.ceil(days/7);}
+function fmtIso(s){const[y,m,d]=s.split('-');return d+'/'+m+'/'+y;}
 
-function getBookedDates(){
+function getBookedSet(){
   const set=new Set();
   reservations.forEach(r=>{
-    let d=new Date(r.start);
-    const e=new Date(r.end);
-    while(d<=e){set.add(d.toISOString().slice(0,10));d.setDate(d.getDate()+1);}
+    let d=isoToDate(r.start);const e=isoToDate(r.end);
+    while(d<=e){set.add(dateToIso(d));d.setDate(d.getDate()+1);}
   });
   return set;
+}
+
+function initCal(){
+  const now=new Date();calYear=now.getFullYear();calMonth2=now.getMonth();
+  renderCal();renderResList();
 }
 
 function renderCal(){
@@ -759,121 +771,139 @@ function renderCal(){
   const grid=document.getElementById('calGrid');
   grid.innerHTML='';
   const today=new Date();today.setHours(0,0,0,0);
-  const booked=getBookedDates();
+  const todayIso=dateToIso(today);
+  const booked=getBookedSet();
   const first=new Date(calYear,calMonth2,1);
   const last=new Date(calYear,calMonth2+1,0);
-  // Monday=0 offset
-  let startDow=(first.getDay()+6)%7;
+  const startDow=(first.getDay()+6)%7;
   for(let i=0;i<startDow;i++){const e=document.createElement('div');e.className='cal-day empty';grid.appendChild(e);}
   for(let d=1;d<=last.getDate();d++){
     const dt=new Date(calYear,calMonth2,d);
-    const iso=dt.toISOString().slice(0,10);
+    const iso=dateToIso(dt);
     const el=document.createElement('div');
     el.className='cal-day';
     el.textContent=d;
-    const isPast=dt<today;
-    const isBooked=booked.has(iso);
-    const isToday=dt.getTime()===today.getTime();
-    if(isPast) el.classList.add('past');
-    else if(isBooked) el.classList.add('booked');
+    if(dt<today){el.classList.add('past');}
+    else if(booked.has(iso)){el.classList.add('booked');}
     else{
-      el.addEventListener('click',()=>dayClick(iso));
-      el.addEventListener('touchend',function(e){e.preventDefault();dayClick(iso);},{passive:false});
-      if(isToday) el.classList.add('today');
+      el.setAttribute('data-iso',iso);
+      el.setAttribute('data-sel','1');
+      el.setAttribute('tabindex','0');
+      if(iso===todayIso) el.classList.add('today');
       if(selStart&&selEnd){
-        const s=new Date(selStart),e2=new Date(selEnd);
         if(iso===selStart) el.classList.add('selected');
         else if(iso===selEnd) el.classList.add('selected-end');
-        else if(dt>s&&dt<e2) el.classList.add('in-range');
+        else if(iso>selStart&&iso<selEnd) el.classList.add('in-range');
       } else if(selStart&&iso===selStart) el.classList.add('selected');
     }
     grid.appendChild(el);
   }
-  renderResList();
 }
 
-function dayClick(iso){
-  if(selPhase===0||selPhase===2){selStart=iso;selEnd=null;selPhase=1;}
-  else{
-    if(iso<selStart){selEnd=selStart;selStart=iso;}
-    else selEnd=iso;
-    selPhase=2;
+function initCalListeners(){
+  const grid=document.getElementById('calGrid');
+  grid.addEventListener('pointerdown',function(ev){
+    const el=ev.target.closest('[data-sel]');
+    if(!el) return;
+    ev.preventDefault();
+    handleDayClick(el.getAttribute('data-iso'));
+  });
+  grid.addEventListener('keydown',function(ev){
+    if(ev.key==='Enter'||ev.key===' '){
+      const el=document.activeElement;
+      if(el&&el.getAttribute('data-sel')){ev.preventDefault();handleDayClick(el.getAttribute('data-iso'));}
+    }
+  });
+}
+
+function handleDayClick(iso){
+  if(selPhase===0||selPhase===2){
+    selStart=iso;selEnd=null;selPhase=1;
+  } else {
+    let start=iso<selStart?iso:selStart;
+    let end=iso<selStart?selStart:iso;
+    const days=daysBetween(start,end);
+    if(days<MIN_WEEKS*7) end=addDays(start,MIN_WEEKS*7-1);
+    const booked=getBookedSet();
+    let dt=isoToDate(start);const edt=isoToDate(end);
+    let overlap=false;
+    while(dt<=edt){if(booked.has(dateToIso(dt))){overlap=true;break;}dt.setDate(dt.getDate()+1);}
+    if(overlap){
+      showCalMsg('⚠ Ces dates chevauchent une réservation. Choisissez d\'autres dates.');
+      selStart=null;selEnd=null;selPhase=0;
+    } else {selStart=start;selEnd=end;selPhase=2;}
   }
-  renderCal();
-  updateDatesDisplay();
+  renderCal();updateDatesDisplay();
+}
+
+function showCalMsg(msg){
+  let el=document.getElementById('calMsg');
+  if(!el){el=document.createElement('div');el.id='calMsg';el.style.cssText='padding:10px 14px;font-size:12px;color:#e07070;background:rgba(180,40,40,.12);border-left:2px solid #e07070;margin:8px 10px;border-radius:4px;';
+    const grid=document.getElementById('calGrid');grid.parentNode.insertBefore(el,grid.nextSibling);}
+  el.textContent=msg;setTimeout(()=>{el.textContent='';},5000);
 }
 
 function updateDatesDisplay(){
   const dd=document.getElementById('datesDisplay');
-  if(!selStart){dd.innerHTML='<span style="color:var(--tx4)">Cliquez sur le calendrier pour choisir vos dates</span>';return;}
-  const fmt=s=>{const [y,m,d]=s.split('-');return d+'/'+m+'/'+y;};
-  if(selStart&&selEnd){
-    const days=Math.round((new Date(selEnd)-new Date(selStart))/(86400000))+1;
-    dd.innerHTML=`<span class="d-val">${fmt(selStart)}</span><span class="d-arrow">→</span><span class="d-val">${fmt(selEnd)}</span>&nbsp;<span style="color:var(--tx4);font-size:11px;">(${days} jour${days>1?'s':''})</span>`;
-  } else {
-    dd.innerHTML=`<span class="d-val">${fmt(selStart)}</span><span class="d-arrow"> — </span><span style="color:var(--tx4)">Cliquez sur la date de fin</span>`;
+  const cf=document.getElementById('costField');
+  if(!selStart){
+    dd.innerHTML='<span style="color:var(--tx4)">Cliquez sur le calendrier pour choisir le début</span>';
+    if(cf) cf.style.display='none';return;
+  }
+  if(selPhase===1){
+    dd.innerHTML='<span class="d-val">'+fmtIso(selStart)+'</span><span class="d-arrow"> → </span><span style="color:var(--tx4)">Choisissez la date de fin (min. '+MIN_WEEKS+' semaines)</span>';
+    if(cf) cf.style.display='none';return;
+  }
+  const days=daysBetween(selStart,selEnd);
+  const weeks=weeksFromDays(days);
+  const total=weeks*PRICE_PER_WEEK;
+  dd.innerHTML='<span class="d-val">'+fmtIso(selStart)+'</span><span class="d-arrow"> → </span><span class="d-val">'+fmtIso(selEnd)+'</span> <span style="color:var(--tx4);font-size:11px;">('+days+' jours)</span>';
+  if(cf){
+    document.getElementById('costWeeks').textContent=weeks;
+    document.getElementById('costTotal').innerHTML=total.toLocaleString('fr-FR')+'&nbsp;€';
+    cf.style.display='block';
   }
 }
 
 function renderResList(){
   const body=document.getElementById('resListBody');
   if(!reservations.length){body.innerHTML='<div class="res-empty">Aucune réservation en cours</div>';return;}
-  const fmt=s=>{const [y,m,d]=s.split('-');return d+'/'+m+'/'+y;};
-  const pkgLabels={'starter':'Starter','mensuel':'Mensuel','trimestriel':'Trimestriel','personnalise':'Personnalisé','':''};
-  body.innerHTML=reservations.map(r=>`
-    <div class="res-row">
-      <div>
-        <div class="res-row-dates">${fmt(r.start)} → ${fmt(r.end)}</div>
-        <div class="res-row-name">${r.name||'(sans nom)'}</div>
-      </div>
-      <span class="res-row-pkg">${pkgLabels[r.pkg]||r.pkg}</span>
-      <button class="res-del" onclick="deleteRes('${r.id}')">✕ Annuler</button>
-    </div>`).join('');
+  const pkgLabels={intensif:'Intensif',standard:'Standard',decouverte:'Découverte',personnalise:'Personnalisé','': ''};
+  body.innerHTML=reservations.map(r=>{
+    const weeks=weeksFromDays(daysBetween(r.start,r.end));
+    const total=(weeks*PRICE_PER_WEEK).toLocaleString('fr-FR');
+    return '<div class="res-row"><div><div class="res-row-dates">'+fmtIso(r.start)+' → '+fmtIso(r.end)+'</div><div class="res-row-name">'+( r.name||'(sans nom)')+'  ·  '+weeks+' sem.  ·  '+total+' €</div></div><span class="res-row-pkg">'+(pkgLabels[r.pkg]||r.pkg)+'</span><button class="res-del" onclick="deleteRes(\''+r.id+'\')">✕</button></div>';
+  }).join('');
 }
 
 function toggleResList(){
   const body=document.getElementById('resListBody');
   const btn=document.getElementById('resToggle');
-  const open=body.classList.toggle('open');
-  btn.textContent=open?'Masquer ▲':'Afficher ▾';
+  btn.textContent=body.classList.toggle('open')?'Masquer ▲':'Afficher ▾';
 }
 
 function deleteRes(id){
-  if(!confirm('Supprimer cette réservation ?')) return;
+  if(!confirm('Annuler cette réservation ?')) return;
   reservations=reservations.filter(r=>r.id!==id);
-  renderCal();
+  renderCal();renderResList();
 }
 
 function submitBooking(){
   const name=document.getElementById('bName').value.trim();
   const email=document.getElementById('bEmail').value.trim();
-  if(!selStart||!selEnd){alert('Veuillez sélectionner vos dates de début et de fin sur le calendrier.');return;}
+  if(!selStart||!selEnd){showCalMsg('Veuillez sélectionner vos dates sur le calendrier.');go('booking');return;}
   if(!name){document.getElementById('bName').style.borderColor='#e74c3c';document.getElementById('bName').focus();return;}
   if(!email||!email.includes('@')){document.getElementById('bEmail').style.borderColor='#e74c3c';document.getElementById('bEmail').focus();return;}
-  // Check no overlap with existing reservations
-  const booked=getBookedDates();
-  let d=new Date(selStart);const e=new Date(selEnd);
-  while(d<=e){if(booked.has(d.toISOString().slice(0,10))){alert('Ces dates chevauchent une réservation existante. Veuillez sélectionner d\'autres dates.');return;}d.setDate(d.getDate()+1);}
-  // Save reservation
-  const newRes={
-    id:'r'+(Date.now()),
-    name,email,
-    phone:document.getElementById('bPhone').value,
-    pkg:document.getElementById('bPkg').value,
-    note:document.getElementById('bNote').value,
-    start:selStart,end:selEnd
-  };
-  reservations.push(newRes);
-  // Show success
+  const weeks=weeksFromDays(daysBetween(selStart,selEnd));
+  const total=weeks*PRICE_PER_WEEK;
+  reservations.push({id:'r'+Date.now(),name,email,phone:document.getElementById('bPhone').value,pkg:document.getElementById('bPkg').value,note:document.getElementById('bNote').value,start:selStart,end:selEnd});
   document.getElementById('bookForm').style.display='none';
-  const s=document.getElementById('bookSuccess');
-  s.style.display='block';
+  const s=document.getElementById('bookSuccess');s.style.display='block';
   document.getElementById('succName').textContent=name;
-  // Refresh calendar
-  renderCal();
-  // Auto-open reservations list
-  const body=document.getElementById('resListBody');
-  body.classList.add('open');
+  const sw=document.getElementById('succWeeks');if(sw) sw.textContent=weeks;
+  const st=document.getElementById('succTotal');if(st) st.textContent=total.toLocaleString('fr-FR');
+  renderCal();renderResList();
+  document.getElementById('resListBody').classList.add('open');
   document.getElementById('resToggle').textContent='Masquer ▲';
 }
 
@@ -881,24 +911,17 @@ function resetBooking(){
   selStart=null;selEnd=null;selPhase=0;
   document.getElementById('bookForm').style.display='block';
   document.getElementById('bookSuccess').style.display='none';
-  document.getElementById('bName').value='';
-  document.getElementById('bEmail').value='';
-  document.getElementById('bPhone').value='';
-  document.getElementById('bPkg').value='';
-  document.getElementById('bNote').value='';
-  ['bName','bEmail'].forEach(id=>document.getElementById(id).style.borderColor='');
-  updateDatesDisplay();
-  renderCal();
+  const cf=document.getElementById('costField');if(cf) cf.style.display='none';
+  ['bName','bEmail','bPhone','bNote'].forEach(id=>{const el=document.getElementById(id);if(el){el.value='';el.style.borderColor='';}});
+  const bp=document.getElementById('bPkg');if(bp) bp.value='';
+  updateDatesDisplay();renderCal();
 }
 
-document.getElementById('calPrev').addEventListener('click',()=>{
-  calMonth2--;if(calMonth2<0){calMonth2=11;calYear--;}renderCal();
-});
-document.getElementById('calNext').addEventListener('click',()=>{
-  calMonth2++;if(calMonth2>11){calMonth2=0;calYear++;}renderCal();
-});
+document.getElementById('calPrev').addEventListener('click',()=>{calMonth2--;if(calMonth2<0){calMonth2=11;calYear--;}renderCal();});
+document.getElementById('calNext').addEventListener('click',()=>{calMonth2++;if(calMonth2>11){calMonth2=0;calYear++;}renderCal();});
 
 initCal();
+initCalListeners();
 </script>
 </body>
 </html>
